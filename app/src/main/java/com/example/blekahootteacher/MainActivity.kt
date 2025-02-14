@@ -1,6 +1,7 @@
 package com.example.blekahootteacher
 
 import android.Manifest
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.*
@@ -20,23 +21,23 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 
-// Modelo para cada estudiante detectado
+// Modelo de estudiante detectado
 data class Student(
     val name: String,
-    var code: String? = null // null => no confirmado
+    var code: String? = null // null => sin confirmar
 )
 
 class MainActivity : AppCompatActivity() {
 
     private val TAG = "TeacherApp"
-
-    // Permisos
     private val PERMISSION_REQUEST_CODE = 200
 
+    // Para seleccionar carpeta con imágenes
+    private val REQUEST_CODE_PICK_DIRECTORY = 123
+    private var selectedDirectoryUri: Uri? = null
+
     /**
-     * Retorna los permisos requeridos dependiendo de la versión de Android.
-     * Android 12+ => BLUETOOTH_SCAN, BLUETOOTH_CONNECT, BLUETOOTH_ADVERTISE, FINE_LOCATION
-     * Android 6 a 11 => BLUETOOTH, BLUETOOTH_ADMIN, FINE_LOCATION
+     * Retorna los permisos BLE dependiendo de la versión de Android.
      */
     private fun getRequiredPermissions(): Array<String> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -66,9 +67,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStudents: TextView
     private lateinit var btnConfirmNext: Button
     private lateinit var btnStartAll: Button
-    private lateinit var btnNewRoundAll: Button
+    private lateinit var btnSelectDirectory: Button
 
-    // Lista de estudiantes detectados
+    // Lista de estudiantes
     private val discoveredStudents = mutableListOf<Student>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,18 +80,18 @@ class MainActivity : AppCompatActivity() {
         tvStudents = findViewById(R.id.tvStudents)
         btnConfirmNext = findViewById(R.id.btnConfirmNext)
         btnStartAll = findViewById(R.id.btnStartAll)
-        btnNewRoundAll = findViewById(R.id.btnNewRoundAll)
+        btnSelectDirectory = findViewById(R.id.btnSelectDirectory)
 
         // Verificar permisos BLE
         checkAndRequestPermissions()
 
-        // Inicializar BLE
+        // Inicializamos BLE
         val bluetoothManager = getSystemService(BluetoothManager::class.java)
         bluetoothAdapter = bluetoothManager.adapter
         bluetoothLeScanner = bluetoothAdapter.bluetoothLeScanner
         advertiser = bluetoothAdapter.bluetoothLeAdvertiser
 
-        // Iniciar escaneo para "NAME:<nombre>"
+        // Iniciamos escaneo para "NAME:<nombre>"
         startScanForStudents()
 
         // Botón para confirmar al primer estudiante sin código
@@ -106,33 +107,42 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Botón para enviar "START:ALL" a todos los confirmados
+        // Botón para "Start All"
         btnStartAll.setOnClickListener {
             advertiseStartAll()
+            // Si ya elegimos la carpeta, saltamos a TeacherQuestionActivity
+            if (selectedDirectoryUri == null) {
+                Toast.makeText(this, "Selecciona la carpeta de imágenes", Toast.LENGTH_SHORT).show()
+            } else {
+                val intent = Intent(this, TeacherQuestionActivity::class.java)
+                intent.putExtra("EXTRA_DIRECTORY_URI", selectedDirectoryUri.toString())
+                startActivity(intent)
+            }
         }
 
-        // Botón para enviar "NEWROUND:ALL" a todos (por ejemplo, tras 10s de pregunta)
-        btnNewRoundAll.setOnClickListener {
-            advertiseNewRoundAll()
+        // Botón para seleccionar la carpeta con imágenes
+        btnSelectDirectory.setOnClickListener {
+            pickDirectory()
         }
     }
 
-    /**
-     * Chequea y pide permisos en tiempo de ejecución
-     */
+    // -------------------------------------------------------------------
+    //         MANEJO DE PERMISOS
+    // -------------------------------------------------------------------
     private fun checkAndRequestPermissions() {
         val requiredPermissions = getRequiredPermissions()
         val missingPermissions = requiredPermissions.filter {
             ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missingPermissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
+            ActivityCompat.requestPermissions(
+                this,
+                missingPermissions.toTypedArray(),
+                PERMISSION_REQUEST_CODE
+            )
         }
     }
 
-    /**
-     * Respuesta al request de permisos
-     */
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
@@ -154,9 +164,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Diálogo para ir a Ajustes si el usuario marcó "No volver a preguntar"
-     */
     private fun showGoToSettingsDialog() {
         AlertDialog.Builder(this)
             .setTitle("Permiso necesario")
@@ -172,9 +179,28 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /**
-     * Inicia el escaneo BLE para "NAME:<nombre>"
-     */
+    // -------------------------------------------------------------------
+    //         SELECCIONAR DIRECTORIO (SAF)
+    // -------------------------------------------------------------------
+    private fun pickDirectory() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+        startActivityForResult(intent, REQUEST_CODE_PICK_DIRECTORY)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_PICK_DIRECTORY && resultCode == Activity.RESULT_OK) {
+            val uri = data?.data
+            if (uri != null) {
+                selectedDirectoryUri = uri
+                Toast.makeText(this, "Carpeta seleccionada: $uri", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------
+    //         ESCANEO DE ESTUDIANTES
+    // -------------------------------------------------------------------
     private fun startScanForStudents() {
         if (!bluetoothAdapter.isEnabled) {
             Toast.makeText(this, "Activa el Bluetooth para escanear", Toast.LENGTH_SHORT).show()
@@ -187,7 +213,7 @@ class MainActivity : AppCompatActivity() {
         if (isScanning) return
 
         val filter = ScanFilter.Builder()
-            .setManufacturerData(0x1234, byteArrayOf()) // Mismo ID que el Student
+            .setManufacturerData(0x1234, byteArrayOf())
             .build()
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -205,9 +231,6 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "Escaneo detenido")
     }
 
-    /**
-     * Callbacks de escaneo
-     */
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             super.onScanResult(callbackType, result)
@@ -249,32 +272,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Muestra en pantalla la lista de estudiantes y su estado
-     */
+    // -------------------------------------------------------------------
+    //         CONFIRMAR ESTUDIANTE Y START ALL
+    // -------------------------------------------------------------------
     private fun updateStudentListUI() {
         if (discoveredStudents.isEmpty()) {
             tvStudents.text = "No hay estudiantes detectados."
         } else {
             val builder = StringBuilder()
-            discoveredStudents.forEachIndexed { index, student ->
-                val status = student.code?.let { "Código: $it" } ?: "Sin confirmar"
-                builder.append("${index+1}) ${student.name} → $status\n")
+            discoveredStudents.forEachIndexed { index, s ->
+                val status = s.code?.let { "Código: $it" } ?: "Sin confirmar"
+                builder.append("${index+1}) ${s.name} → $status\n")
             }
             tvStudents.text = builder.toString()
         }
     }
 
-    /**
-     * Genera un código aleatorio de 1 byte en hex, p.ej. "AF", "2B", etc.
-     */
     private fun generateRandomCode(): String {
         val randomByte = (0..255).random().toByte()
         return String.format("%02X", randomByte)
     }
 
     /**
-     * Publica "CONF:<nombre>:<code>"
+     * Envía "CONF:<nombre>:<código>"
      */
     private fun advertiseConfirmation(name: String, code: String) {
         stopAdvertisingIfNeeded()
@@ -297,14 +317,14 @@ class MainActivity : AppCompatActivity() {
         advertiser?.startAdvertising(settings, data, advertiseCallback)
         isAdvertising = true
 
-        // Detenemos en 2s
+        // Mantener ~2s
         Handler(Looper.getMainLooper()).postDelayed({
             stopAdvertisingIfNeeded()
         }, 2000)
     }
 
     /**
-     * Envía "START:ALL" a todos los estudiantes confirmados (solo un advertising).
+     * Envía "START:ALL"
      */
     private fun advertiseStartAll() {
         stopAdvertisingIfNeeded()
@@ -327,45 +347,15 @@ class MainActivity : AppCompatActivity() {
         advertiser?.startAdvertising(settings, data, advertiseCallback)
         isAdvertising = true
 
-        // Mantén 5s para que todos lo detecten
+        // Mantener ~5s
         Handler(Looper.getMainLooper()).postDelayed({
             stopAdvertisingIfNeeded()
         }, 5000)
     }
 
-    /**
-     * Envía "NEWROUND:ALL" tras los 10s de pregunta, para que pasen a la pantalla 3.
-     */
-    private fun advertiseNewRoundAll() {
-        stopAdvertisingIfNeeded()
-
-        val dataString = "NEWROUND:ALL"
-        val dataToSend = dataString.toByteArray()
-        Log.d(TAG, "Advertise NEWROUND:ALL")
-
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(false)
-            .build()
-
-        val data = AdvertiseData.Builder()
-            .addManufacturerData(0x1234, dataToSend)
-            .setIncludeDeviceName(false)
-            .build()
-
-        advertiser?.startAdvertising(settings, data, advertiseCallback)
-        isAdvertising = true
-
-        // Lo mantenemos 5s
-        Handler(Looper.getMainLooper()).postDelayed({
-            stopAdvertisingIfNeeded()
-        }, 5000)
-    }
-
-    /**
-     * Callback genérico de Advertising
-     */
+    // -------------------------------------------------------------------
+    //         ADVERTISING CALLBACK GENÉRICO
+    // -------------------------------------------------------------------
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
             super.onStartSuccess(settingsInEffect)
@@ -378,14 +368,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Detiene la publicidad BLE si está activa
-     */
     private fun stopAdvertisingIfNeeded() {
         if (isAdvertising) {
             advertiser?.stopAdvertising(advertiseCallback)
             isAdvertising = false
             Log.d(TAG, "Advertising detenido")
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopScanning()
+        stopAdvertisingIfNeeded()
     }
 }

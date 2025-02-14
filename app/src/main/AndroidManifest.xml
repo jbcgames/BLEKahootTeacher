@@ -22,5 +22,12 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity
+            android:name=".TeacherQuestionActivity"
+            android:label="Pregunta"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize"
+            android:exported="true"/>
+
     </application>
 </manifest>
