@@ -7,22 +7,22 @@
     android:gravity="center_horizontal"
     android:padding="16dp">
 
-    <!-- Muestra la lista de estudiantes (nombre + código) -->
+    <!-- Lista de estudiantes detectados -->
     <TextView
         android:id="@+id/tvStudents"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="No hay estudiantes detectados aún."
-        android:layout_marginBottom="16dp"/>
+        android:layout_marginBottom="16dp" />
 
     <!-- Botón para confirmar al primer estudiante sin código -->
     <Button
         android:id="@+id/btnConfirmNext"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Confirmar siguiente sin código"/>
+        android:text="Confirmar siguiente sin código" />
 
-    <!-- Botón para enviar "START:ALL" a los estudiantes confirmados -->
+    <!-- Botón para enviar START:ALL y abrir TeacherQuestionActivity -->
     <Button
         android:id="@+id/btnStartAll"
         android:layout_width="wrap_content"
@@ -30,15 +30,11 @@
         android:text="Start All"
         android:layout_marginTop="8dp"/>
 
-    <!-- Botón para seleccionar directorio con imágenes (usar SAF) -->
+    <!-- Botón opcional para seleccionar directorio (si usas imágenes enumeradas) -->
     <Button
         android:id="@+id/btnSelectDirectory"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Seleccionar Directorio"
         android:layout_marginTop="8dp"/>
-
-    <!-- (Opcional) Botón para 'NewRoundAll' si quisieras enviarlo desde aquí,
-         pero en este ejemplo lo manejamos en TeacherQuestionActivity.
-         Si no lo necesitas, puedes omitirlo. -->
 </LinearLayout>

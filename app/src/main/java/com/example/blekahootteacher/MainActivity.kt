@@ -24,7 +24,7 @@ import androidx.core.app.ActivityCompat
 // Modelo de estudiante detectado
 data class Student(
     val name: String,
-    var code: String? = null // null => sin confirmar
+    var code: String? = null
 )
 
 class MainActivity : AppCompatActivity() {
@@ -32,29 +32,9 @@ class MainActivity : AppCompatActivity() {
     private val TAG = "TeacherApp"
     private val PERMISSION_REQUEST_CODE = 200
 
-    // Para seleccionar carpeta con imágenes
+    // SAF para carpeta (si usas imágenes enumeradas)
     private val REQUEST_CODE_PICK_DIRECTORY = 123
     private var selectedDirectoryUri: Uri? = null
-
-    /**
-     * Retorna los permisos BLE dependiendo de la versión de Android.
-     */
-    private fun getRequiredPermissions(): Array<String> {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_CONNECT,
-                Manifest.permission.BLUETOOTH_ADVERTISE,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
-        } else {
-            arrayOf(
-                Manifest.permission.BLUETOOTH,
-                Manifest.permission.BLUETOOTH_ADMIN,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
-        }
-    }
 
     // BLE
     private lateinit var bluetoothAdapter: BluetoothAdapter
@@ -76,25 +56,21 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Referencias UI
         tvStudents = findViewById(R.id.tvStudents)
         btnConfirmNext = findViewById(R.id.btnConfirmNext)
         btnStartAll = findViewById(R.id.btnStartAll)
         btnSelectDirectory = findViewById(R.id.btnSelectDirectory)
 
-        // Verificar permisos BLE
         checkAndRequestPermissions()
 
-        // Inicializamos BLE
         val bluetoothManager = getSystemService(BluetoothManager::class.java)
         bluetoothAdapter = bluetoothManager.adapter
         bluetoothLeScanner = bluetoothAdapter.bluetoothLeScanner
         advertiser = bluetoothAdapter.bluetoothLeAdvertiser
 
-        // Iniciamos escaneo para "NAME:<nombre>"
         startScanForStudents()
 
-        // Botón para confirmar al primer estudiante sin código
+        // Botón para confirmar al primer sin código
         btnConfirmNext.setOnClickListener {
             val studentToConfirm = discoveredStudents.firstOrNull { it.code == null }
             if (studentToConfirm == null) {
@@ -107,20 +83,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Botón para "Start All"
+        // Botón para enviar "START:ALL" y abrir TeacherQuestionActivity
         btnStartAll.setOnClickListener {
             advertiseStartAll()
-            // Si ya elegimos la carpeta, saltamos a TeacherQuestionActivity
             if (selectedDirectoryUri == null) {
-                Toast.makeText(this, "Selecciona la carpeta de imágenes", Toast.LENGTH_SHORT).show()
-            } else {
-                val intent = Intent(this, TeacherQuestionActivity::class.java)
-                intent.putExtra("EXTRA_DIRECTORY_URI", selectedDirectoryUri.toString())
-                startActivity(intent)
+                Toast.makeText(this, "Selecciona la carpeta de imágenes si usas enumeradas", Toast.LENGTH_SHORT).show()
             }
+            // Ir a TeacherQuestionActivity
+            val intent = Intent(this, TeacherQuestionActivity::class.java)
+            // Si usas imágenes:
+            selectedDirectoryUri?.let { uri ->
+                intent.putExtra("EXTRA_DIRECTORY_URI", uri.toString())
+            }
+            // Podrías pasar la lista de estudiantes confirmados si lo necesitas
+            startActivity(intent)
         }
 
-        // Botón para seleccionar la carpeta con imágenes
+        // Botón para seleccionar directorio
         btnSelectDirectory.setOnClickListener {
             pickDirectory()
         }
@@ -130,16 +109,25 @@ class MainActivity : AppCompatActivity() {
     //         MANEJO DE PERMISOS
     // -------------------------------------------------------------------
     private fun checkAndRequestPermissions() {
-        val requiredPermissions = getRequiredPermissions()
+        val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+        } else {
+            arrayOf(
+                Manifest.permission.BLUETOOTH,
+                Manifest.permission.BLUETOOTH_ADMIN,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            )
+        }
         val missingPermissions = requiredPermissions.filter {
             ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missingPermissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(
-                this,
-                missingPermissions.toTypedArray(),
-                PERMISSION_REQUEST_CODE
-            )
+            ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), PERMISSION_REQUEST_CODE)
         }
     }
 
@@ -147,12 +135,10 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
             if (!grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                // Al menos uno se denegó
                 for ((index, perm) in permissions.withIndex()) {
                     if (grantResults[index] == PackageManager.PERMISSION_DENIED) {
                         val showRationale = ActivityCompat.shouldShowRequestPermissionRationale(this, perm)
                         if (!showRationale) {
-                            // "No volver a preguntar"
                             showGoToSettingsDialog()
                             return
                         } else {
@@ -167,8 +153,7 @@ class MainActivity : AppCompatActivity() {
     private fun showGoToSettingsDialog() {
         AlertDialog.Builder(this)
             .setTitle("Permiso necesario")
-            .setMessage("Necesitamos el permiso de Bluetooth/Ubicación para detectar a los estudiantes. " +
-                    "Por favor habilítalo en Ajustes.")
+            .setMessage("Necesitamos Bluetooth/Ubicación para detectar a los estudiantes.")
             .setPositiveButton("Ir a Ajustes") { _, _ ->
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                     data = Uri.fromParts("package", packageName, null)
@@ -199,7 +184,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // -------------------------------------------------------------------
-    //         ESCANEO DE ESTUDIANTES
+    //         ESCANEO DE ESTUDIANTES (NAME:<nombre>)
     // -------------------------------------------------------------------
     private fun startScanForStudents() {
         if (!bluetoothAdapter.isEnabled) {
@@ -254,43 +239,37 @@ class MainActivity : AppCompatActivity() {
         val dataString = String(data)
         Log.d(TAG, "Recibido: $dataString")
 
-        // Si es "NAME:<nombre>", registramos al estudiante
         if (dataString.startsWith("NAME:")) {
             val parts = dataString.split(":")
             if (parts.size == 2) {
                 val name = parts[1].trim()
-                // ¿Ya existe en la lista?
+                // Si no está ya en la lista
                 val existing = discoveredStudents.firstOrNull { it.name == name }
                 if (existing == null) {
                     discoveredStudents.add(Student(name))
-                    runOnUiThread {
-                        updateStudentListUI()
-                    }
+                    runOnUiThread { updateStudentListUI() }
                     Log.d(TAG, "Nuevo estudiante detectado: $name")
                 }
             }
         }
     }
 
-    // -------------------------------------------------------------------
-    //         CONFIRMAR ESTUDIANTE Y START ALL
-    // -------------------------------------------------------------------
     private fun updateStudentListUI() {
         if (discoveredStudents.isEmpty()) {
             tvStudents.text = "No hay estudiantes detectados."
         } else {
-            val builder = StringBuilder()
-            discoveredStudents.forEachIndexed { index, s ->
-                val status = s.code?.let { "Código: $it" } ?: "Sin confirmar"
-                builder.append("${index+1}) ${s.name} → $status\n")
+            val sb = StringBuilder()
+            discoveredStudents.forEachIndexed { i, st ->
+                val stCode = st.code ?: "sin confirmar"
+                sb.append("${i+1}) ${st.name} => $stCode\n")
             }
-            tvStudents.text = builder.toString()
+            tvStudents.text = sb.toString()
         }
     }
 
     private fun generateRandomCode(): String {
-        val randomByte = (0..255).random().toByte()
-        return String.format("%02X", randomByte)
+        val rByte = (0..255).random().toByte()
+        return String.format("%02X", rByte)  // "AB", etc.
     }
 
     /**
@@ -317,7 +296,6 @@ class MainActivity : AppCompatActivity() {
         advertiser?.startAdvertising(settings, data, advertiseCallback)
         isAdvertising = true
 
-        // Mantener ~2s
         Handler(Looper.getMainLooper()).postDelayed({
             stopAdvertisingIfNeeded()
         }, 2000)
@@ -347,21 +325,16 @@ class MainActivity : AppCompatActivity() {
         advertiser?.startAdvertising(settings, data, advertiseCallback)
         isAdvertising = true
 
-        // Mantener ~5s
         Handler(Looper.getMainLooper()).postDelayed({
             stopAdvertisingIfNeeded()
         }, 5000)
     }
 
-    // -------------------------------------------------------------------
-    //         ADVERTISING CALLBACK GENÉRICO
-    // -------------------------------------------------------------------
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
             super.onStartSuccess(settingsInEffect)
             Log.d(TAG, "Advertising iniciado correctamente")
         }
-
         override fun onStartFailure(errorCode: Int) {
             super.onStartFailure(errorCode)
             Log.e(TAG, "Error en advertising: $errorCode")

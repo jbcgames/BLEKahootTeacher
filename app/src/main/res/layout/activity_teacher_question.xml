@@ -5,18 +5,21 @@
     android:layout_height="match_parent"
     android:background="@android:color/white">
 
+    <!-- ImageView (opcional) para la pregunta -->
     <ImageView
         android:id="@+id/imgQuestion"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:scaleType="fitCenter"
-        android:src="@null"/>
+        android:src="@null" />
 
+    <!-- Botón para iniciar la ronda (NEWROUND).
+         También podrías hacer la lógica automáticamente al entrar en la actividad. -->
     <Button
-        android:id="@+id/btnAction"
+        android:id="@+id/btnNewRound"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="NewRound"
-    android:layout_gravity="bottom|end"
-    android:layout_margin="16dp"/>
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"/>
 </FrameLayout>
