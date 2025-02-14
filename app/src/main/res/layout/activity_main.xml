@@ -3,22 +3,34 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center_vertical"
     android:orientation="vertical"
+    android:gravity="center_horizontal"
     android:padding="16dp">
 
-    <Button
-        android:id="@+id/btnStartScan"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Iniciar Escaneo"/>
-
     <TextView
-        android:id="@+id/textResults"
+        android:id="@+id/tvStudents"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Resultados:"
-        android:textSize="16sp"
-        android:layout_marginTop="16dp"/>
+        android:text="No hay estudiantes detectados aún."
+        android:layout_marginBottom="16dp"/>
 
+    <Button
+        android:id="@+id/btnConfirmNext"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Confirmar siguiente sin código"/>
+
+    <Button
+        android:id="@+id/btnStartAll"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Start All"
+        android:layout_marginTop="8dp"/>
+
+    <Button
+        android:id="@+id/btnNewRoundAll"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="New Round"
+        android:layout_marginTop="8dp"/>
 </LinearLayout>
