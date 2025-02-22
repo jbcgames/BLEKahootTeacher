@@ -28,9 +28,11 @@ data class Student(
 )
 
 class MainActivity : AppCompatActivity() {
-
+    private var keepSendingStartAll = false
+    private val startAllAckSet = mutableSetOf<String>()
     private val TAG = "TeacherApp"
     private val PERMISSION_REQUEST_CODE = 200
+    private var totalStudents: Int = 0
 
     // SAF para carpeta (si usas imágenes enumeradas)
     private val REQUEST_CODE_PICK_DIRECTORY = 123
@@ -84,20 +86,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Botón para enviar "START:ALL" y abrir TeacherQuestionActivity
+        // Al pulsar Start All
         btnStartAll.setOnClickListener {
-            advertiseStartAll()
             if (selectedDirectoryUri == null) {
-                Toast.makeText(this, "Selecciona la carpeta de imágenes si usas enumeradas", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Primero selecciona la carpeta de imágenes", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
             }
-            // Ir a TeacherQuestionActivity
+
+            // Enviar "START:ALL" en bucle
+            advertiseStartAll()
+
+            // OBTENER CANTIDAD DE ESTUDIANTES CONFIRMADOS
+            val totalConfirmed = discoveredStudents.count { it.code != null }
+
+            // Iniciar TeacherQuestionActivity
             val intent = Intent(this, TeacherQuestionActivity::class.java)
-            // Si usas imágenes:
-            selectedDirectoryUri?.let { uri ->
-                intent.putExtra("EXTRA_DIRECTORY_URI", uri.toString())
-            }
-            // Podrías pasar la lista de estudiantes confirmados si lo necesitas
+            intent.putExtra("EXTRA_TOTAL_STUDENTS", totalConfirmed)
+            intent.putExtra("EXTRA_DIRECTORY_URI", selectedDirectoryUri.toString())
             startActivity(intent)
         }
+
+
 
         // Botón para seleccionar directorio
         btnSelectDirectory.setOnClickListener {
@@ -202,6 +211,7 @@ class MainActivity : AppCompatActivity() {
             .build()
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
             .build()
 
         bluetoothLeScanner?.startScan(listOf(filter), settings, scanCallback)
@@ -238,7 +248,30 @@ class MainActivity : AppCompatActivity() {
         val data = record.getManufacturerSpecificData(0x1234) ?: return
         val dataString = String(data)
         Log.d(TAG, "Recibido: $dataString")
-
+        if (dataString.startsWith("ACK_START")) {
+            // Usamos, por ejemplo, la dirección MAC del dispositivo como identificador único
+            val deviceId = result.device.address
+            startAllAckSet.add(deviceId)
+            Log.d(TAG, "ACK_START recibido de $deviceId, total: ${startAllAckSet.size}")
+            // Si se han recibido confirmaciones de todos los dispositivos
+            if (startAllAckSet.size >= totalStudents) {
+                keepSendingStartAll = false  // Detenemos el envío repetitivo
+                stopAdvertisingIfNeeded()
+                Log.d(TAG, "Confirmaciones de todos recibidas. Se detiene START:ALL.")
+            }
+        }
+        if (dataString.startsWith("ACKCODE:")) {
+            val parts = dataString.split(":")
+            if (parts.size == 2) {
+                val codeAck = parts[1]
+                // (1) Sacamos de pendingAckCodes
+                pendingAckCodes.remove(codeAck)
+                // (2) Log o Toast
+                runOnUiThread {
+                    Log.d(TAG, "ACKCODE recibido => $codeAck. Dejar de reenviar CONF")
+                }
+            }
+        }
         if (dataString.startsWith("NAME:")) {
             val parts = dataString.split(":")
             if (parts.size == 2) {
@@ -275,12 +308,29 @@ class MainActivity : AppCompatActivity() {
     /**
      * Envía "CONF:<nombre>:<código>"
      */
-    private fun advertiseConfirmation(name: String, code: String) {
+    // FILE: MainActivity.kt (Profesor)
+
+// Un map o set para trackear a quién esperas ACK
+    private val pendingAckCodes = mutableSetOf<String>()
+
+    fun advertiseConfirmation(name: String, code: String) {
+        // Agregar 'code' a pendientes
+        pendingAckCodes.add(code)
+        // Comenzar el envío repetido cada 2 segundos
+        sendConfRepeatedly(name, code)
+    }
+
+    // Nueva función que hace "CONF" en bucle
+    private fun sendConfRepeatedly(name: String, code: String) {
+        if (!pendingAckCodes.contains(code)) {
+            // Ya no está pendiente => no reenvíes
+            return
+        }
+
         stopAdvertisingIfNeeded()
 
         val dataString = "CONF:$name:$code"
         val dataToSend = dataString.toByteArray()
-        Log.d(TAG, "Advertise CONF: $dataString")
 
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -296,20 +346,31 @@ class MainActivity : AppCompatActivity() {
         advertiser?.startAdvertising(settings, data, advertiseCallback)
         isAdvertising = true
 
+        // Repite a los 2s si sigue pendiente
         Handler(Looper.getMainLooper()).postDelayed({
             stopAdvertisingIfNeeded()
+            // Verificar de nuevo. Si code sigue en pendingAckCodes, reenviamos
+            if (pendingAckCodes.contains(code)) {
+                sendConfRepeatedly(name, code)
+            }
         }, 2000)
     }
+
 
     /**
      * Envía "START:ALL"
      */
     private fun advertiseStartAll() {
+        keepSendingStartAll = true  // Activamos el flag
+        sendStartAllRepeatedly()
+    }
+    private fun sendStartAllRepeatedly() {
+        if (!keepSendingStartAll) return  // Si se canceló, salimos
+
         stopAdvertisingIfNeeded()
 
         val dataString = "START:ALL"
         val dataToSend = dataString.toByteArray()
-        Log.d(TAG, "Advertise START:ALL")
 
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -325,9 +386,13 @@ class MainActivity : AppCompatActivity() {
         advertiser?.startAdvertising(settings, data, advertiseCallback)
         isAdvertising = true
 
+        // Repetir cada 2 segundos mientras se requiera
         Handler(Looper.getMainLooper()).postDelayed({
             stopAdvertisingIfNeeded()
-        }, 5000)
+            if (keepSendingStartAll) {
+                sendStartAllRepeatedly()
+            }
+        }, 2000)
     }
 
     private val advertiseCallback = object : AdvertiseCallback() {

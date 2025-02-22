@@ -26,7 +26,7 @@ data class ResponseData(
 class TeacherQuestionActivity : AppCompatActivity() {
 
     private val TAG = "TeacherQuestionActivity"
-
+    private var keepSendingEndRound = false
     // UI
     private lateinit var imgQuestion: ImageView
     private lateinit var btnNewRound: Button
@@ -44,7 +44,7 @@ class TeacherQuestionActivity : AppCompatActivity() {
     private var roundActive = false
 
     // Suponemos 4 estudiantes confirmados (ajusta según tu lista)
-    private val totalStudents = 4
+    private var totalStudents = 0
 
     // Map de "code" => Respuesta
     private val responsesMap = mutableMapOf<String, ResponseData>()
@@ -52,10 +52,10 @@ class TeacherQuestionActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_teacher_question)
-
+        totalStudents = intent.getIntExtra("EXTRA_TOTAL_STUDENTS", 0)
         imgQuestion = findViewById(R.id.imgQuestion)
         btnNewRound = findViewById(R.id.btnNewRound)
-
+        Log.d(TAG, totalStudents.toString())
         // BLE
         val bluetoothManager = getSystemService(BluetoothManager::class.java)
         bluetoothAdapter = bluetoothManager.adapter
@@ -147,6 +147,7 @@ class TeacherQuestionActivity : AppCompatActivity() {
             .build()
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
             .build()
 
         bluetoothLeScanner?.startScan(listOf(filter), settings, scanCallback)
@@ -180,32 +181,33 @@ class TeacherQuestionActivity : AppCompatActivity() {
         val record = result.scanRecord ?: return
         val manufData = record.getManufacturerSpecificData(0x1234) ?: return
         val dataString = String(manufData)
-        Log.d(TAG, "Recibido: $dataString")
+        Log.d(TAG, "Recibido: $dataString" + " info " + dataString.startsWith("RESP:").toString())
+
 
         if (dataString.startsWith("RESP:")) {
             val parts = dataString.split(":")
-            // RESP:<code>:<answer>
+            // Se espera el formato "RESP:<code>:<answer>"
             if (parts.size == 3) {
-                val code = parts[1]
-                val answer = parts[2]
-                // Calcula el tiempo
+                val code = parts[1].trim()
+                val answer = parts[2].trim()
                 val now = System.currentTimeMillis()
                 val timeTaken = now - startRoundTimestamp
-
-                // Guarda la respuesta
-                responsesMap[code] = ResponseData(answer, timeTaken)
-
-                // Log de depuración
-                Log.d(TAG, "RESP => code=$code, answer=$answer, time=${timeTaken}ms")
-
-                // Confirmar al estudiante => "CONFRES:<code>"
+                val finalTime = if (code.isEmpty() && answer.isEmpty()) 0L else timeTaken
+                responsesMap[code] = ResponseData(answer, finalTime)
+                Log.d(TAG, "RESP => code=$code, answer=$answer, time=${finalTime}ms")
                 advertiseConfirmResponse(code)
-
-                // Revisa si todos respondieron
+                checkEndOfRound()
+            }else {
+                val code = "0"
+                val answer = "0"
+                responsesMap[code] = ResponseData(answer, 0L)
+                Log.d(TAG, "RESP => code=$code, answer=$answer, time=0ms")
+                advertiseConfirmResponse(code)
                 checkEndOfRound()
             }
         }
     }
+
 
     private fun advertiseConfirmResponse(code: String) {
         advertiseSignal("CONFRES:$code")
@@ -213,7 +215,7 @@ class TeacherQuestionActivity : AppCompatActivity() {
 
     private fun advertiseSignal(signal: String) {
         stopAdvertisingIfNeeded()
-
+        Log.d(TAG, "Enviada señal " + signal)
         val dataString = signal
         val dataToSend = dataString.toByteArray()
 
@@ -279,11 +281,60 @@ class TeacherQuestionActivity : AppCompatActivity() {
 
     private fun endRound() {
         roundActive = false
-        stopScanForResponses()
 
-        // Muestra resultados
-        showResults()
+
+        // Verifica si ya todos respondieron
+        if (responsesMap.size < totalStudents) {
+            // Falta(n) estudiante(s). Enviamos "ENDROUND" repetidamente.
+            keepSendingEndRound = true
+            sendEndRoundRepeatedly()
+        } else {
+            // Todos han respondido; solo mostrar resultados
+            keepSendingEndRound = false
+            stopScanForResponses()
+            showResults()
+        }
     }
+    private fun sendEndRoundRepeatedly() {
+        if (!keepSendingEndRound) return
+
+        stopAdvertisingIfNeeded()
+
+        val dataString = "ENDROUND"
+        val dataToSend = dataString.toByteArray()
+
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setConnectable(false)
+            .build()
+
+        val data = AdvertiseData.Builder()
+            .addManufacturerData(0x1234, dataToSend)
+            .setIncludeDeviceName(false)
+            .build()
+
+        advertiser?.startAdvertising(settings, data, advertiseCallback)
+        isAdvertising = true
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            stopAdvertisingIfNeeded()
+            // Mientras keepSendingEndRound sea true, reenvía
+            if (responsesMap.size < totalStudents) {
+                // Falta(n) estudiante(s). Enviamos "ENDROUND" repetidamente.
+                keepSendingEndRound = true
+            } else {
+                // Todos han respondido; solo mostrar resultados
+                keepSendingEndRound = false
+            }
+            if (keepSendingEndRound) {
+                Log.d(TAG, "Enviando ENDROUND " + responsesMap.size.toString())
+                sendEndRoundRepeatedly()
+            }
+        }, 2000)
+    }
+
+
 
     private fun showResults() {
         Log.d(TAG, "===== RESULTADOS DE LA RONDA =====")
