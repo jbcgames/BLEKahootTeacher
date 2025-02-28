@@ -28,7 +28,8 @@ data class Student(
 )
 
 class MainActivity : AppCompatActivity() {
-    private var keepSendingStartAll = false
+    private var isAdvertisingStartAll = false
+
     private val startAllAckSet = mutableSetOf<String>()
     private val TAG = "TeacherApp"
     private val PERMISSION_REQUEST_CODE = 200
@@ -93,18 +94,33 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            // Enviar "START:ALL" en bucle
-            advertiseStartAll()
+            // Verifica si hay algún estudiante con code == null
+            val anyUnconfirmed = discoveredStudents.any { it.code == null }
+            if (anyUnconfirmed) {
+                Toast.makeText(this, "Aún hay estudiantes sin confirmar", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
 
-            // OBTENER CANTIDAD DE ESTUDIANTES CONFIRMADOS
+            // 1) Calcula cuántos estudiantes están confirmados
             val totalConfirmed = discoveredStudents.count { it.code != null }
+            totalStudents = totalConfirmed
 
-            // Iniciar TeacherQuestionActivity
-            val intent = Intent(this, TeacherQuestionActivity::class.java)
-            intent.putExtra("EXTRA_TOTAL_STUDENTS", totalConfirmed)
-            intent.putExtra("EXTRA_DIRECTORY_URI", selectedDirectoryUri.toString())
-            startActivity(intent)
+            // 2) Limpia el set de ACK_START para empezar a contar desde cero
+            startAllAckSet.clear()
+
+            // 3) Inicia anuncio indefinido de "START:ALL"
+            startAdvertisingStartAllIndefinitely()
+
+            Toast.makeText(
+                this,
+                "START:ALL enviado. Esperando ACK_START de $totalStudents estudiante(s).",
+                Toast.LENGTH_SHORT
+            ).show()
         }
+
+
+
+
 
 
 
@@ -117,6 +133,42 @@ class MainActivity : AppCompatActivity() {
     // -------------------------------------------------------------------
     //         MANEJO DE PERMISOS
     // -------------------------------------------------------------------
+    private fun stopAdvertisingStartAll() {
+        if (!isAdvertisingStartAll) return
+
+        stopAdvertisingIfNeeded()
+        isAdvertisingStartAll = false
+        Log.d(TAG, "START:ALL => Advertising detenido")
+    }
+
+    private fun startAdvertisingStartAllIndefinitely() {
+        // Si ya estamos anunciando START:ALL, no repitas
+        if (isAdvertisingStartAll) return
+
+        // Detenemos cualquier otro advertising en curso
+        stopAdvertisingIfNeeded()
+
+        val dataString = "START:ALL"
+        val dataToSend = dataString.toByteArray()
+
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setConnectable(false)
+            .build()
+
+        val data = AdvertiseData.Builder()
+            .addManufacturerData(0x1234, dataToSend)
+            .setIncludeDeviceName(false)
+            .build()
+
+        advertiser?.startAdvertising(settings, data, advertiseCallback)
+        isAdvertising = true
+        isAdvertisingStartAll = true
+
+        Log.d(TAG, "START:ALL => Advertising indefinido iniciado")
+    }
+
     private fun checkAndRequestPermissions() {
         val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
@@ -249,17 +301,29 @@ class MainActivity : AppCompatActivity() {
         val dataString = String(data)
         Log.d(TAG, "Recibido: $dataString")
         if (dataString.startsWith("ACK_START")) {
-            // Usamos, por ejemplo, la dirección MAC del dispositivo como identificador único
             val deviceId = result.device.address
             startAllAckSet.add(deviceId)
-            Log.d(TAG, "ACK_START recibido de $deviceId, total: ${startAllAckSet.size}")
-            // Si se han recibido confirmaciones de todos los dispositivos
+            Log.d(TAG, "ACK_START recibido de $deviceId => ${startAllAckSet.size} de $totalStudents")
+
+            // Cuando alcance el total...
             if (startAllAckSet.size >= totalStudents) {
-                keepSendingStartAll = false  // Detenemos el envío repetitivo
+
                 stopAdvertisingIfNeeded()
-                Log.d(TAG, "Confirmaciones de todos recibidas. Se detiene START:ALL.")
+                stopScanning()
+                Log.d(TAG, "Todos los ACK_START recibidos. Se detiene START:ALL.")
+
+                // ABRIMOS la TeacherQuestionActivity en el hilo principal
+                runOnUiThread {
+                    val intent = Intent(this@MainActivity, TeacherQuestionActivity::class.java)
+                    intent.putExtra("EXTRA_TOTAL_STUDENTS", totalStudents)
+                    // Pásale también la carpeta de imágenes
+                    intent.putExtra("EXTRA_DIRECTORY_URI", selectedDirectoryUri.toString())
+                    startActivity(intent)
+                }
             }
         }
+
+
         if (dataString.startsWith("ACKCODE:")) {
             val parts = dataString.split(":")
             if (parts.size == 2) {
@@ -360,40 +424,7 @@ class MainActivity : AppCompatActivity() {
     /**
      * Envía "START:ALL"
      */
-    private fun advertiseStartAll() {
-        keepSendingStartAll = true  // Activamos el flag
-        sendStartAllRepeatedly()
-    }
-    private fun sendStartAllRepeatedly() {
-        if (!keepSendingStartAll) return  // Si se canceló, salimos
 
-        stopAdvertisingIfNeeded()
-
-        val dataString = "START:ALL"
-        val dataToSend = dataString.toByteArray()
-
-        val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(false)
-            .build()
-
-        val data = AdvertiseData.Builder()
-            .addManufacturerData(0x1234, dataToSend)
-            .setIncludeDeviceName(false)
-            .build()
-
-        advertiser?.startAdvertising(settings, data, advertiseCallback)
-        isAdvertising = true
-
-        // Repetir cada 2 segundos mientras se requiera
-        Handler(Looper.getMainLooper()).postDelayed({
-            stopAdvertisingIfNeeded()
-            if (keepSendingStartAll) {
-                sendStartAllRepeatedly()
-            }
-        }, 2000)
-    }
 
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
