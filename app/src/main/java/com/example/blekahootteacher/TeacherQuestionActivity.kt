@@ -434,24 +434,20 @@ class TeacherQuestionActivity : AppCompatActivity() {
         Toast.makeText(this, "Resultados en LogCat", Toast.LENGTH_LONG).show()
     }
     private fun loadAnswersFile(directoryUri: Uri) {
-        // Ubicamos el DocumentFile de esa carpeta
-        val docFile = androidx.documentfile.provider.DocumentFile.fromTreeUri(this, directoryUri)
-            ?: return
-
+        val docFile = DocumentFile.fromTreeUri(this, directoryUri) ?: return
         // Buscamos un archivo llamado "respuestas.txt"
-        val answersFile = docFile.listFiles().firstOrNull { it.name.equals("respuestas.txt", true) }
+        val answersFile = docFile.listFiles().firstOrNull { it.name.equals("respuestas.txt", ignoreCase = true) }
             ?: return
 
-        // Leemos su contenido línea a línea
         contentResolver.openInputStream(answersFile.uri)?.use { inputStream ->
             val lines = inputStream.bufferedReader().readLines()
-            // Suponiendo que cada línea es "A", "B", "C" o "D", o alguna forma de respuesta correcta
-            // O si tienes "1, A", "2, B", tendrás que parsear. Aquí asumimos 1 respuesta por línea
+            // Convertimos cada línea a mayúsculas para normalizar
             answersList.clear()
-            answersList.addAll(lines.map { it.trim() })
+            answersList.addAll(lines.map { it.trim().uppercase() })
         }
         Log.d(TAG, "Archivo respuestas.txt cargado: $answersList")
     }
+
 
     /**
      * Envía SHOWAW:<correctAnswer> de manera indefinida y espera ACK_SHOWAW de todos los estudiantes
@@ -461,16 +457,17 @@ class TeacherQuestionActivity : AppCompatActivity() {
             Toast.makeText(this, "Índice de pregunta fuera de rango", Toast.LENGTH_SHORT).show()
             return
         }
+        // Supongamos que deseas usar la primera opción de cada línea
+        val rawAnswer = answersList[currentIndex]
+        // Separa por coma y toma el primer elemento, normalizando (mayúsculas y sin espacios)
+        val correctAnswer = rawAnswer.split(",")[0].trim().uppercase()
 
-        // Obtenemos la respuesta correcta desde answersList, con el mismo índice que la imagen
-        val correctAnswer = answersList[currentIndex]  // p.ej. "A", "B", "C" o "D"
-
-        // Limpiamos el set de ACK para esta fase
+        // Limpia el set de ACK para esta fase
         showAwAckSet.clear()
 
-        // Iniciar la publicidad indefinida de SHOWAW
+        // Inicia el advertising indefinido con la respuesta correcta ya filtrada
         startAdvertisingShowAwIndefinitely(correctAnswer)
-        Toast.makeText(this, "Mostrando respuesta: $correctAnswer. Esperando ACK de todos.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "SHOWAW enviado: $correctAnswer", Toast.LENGTH_SHORT).show()
     }
 
     /**
