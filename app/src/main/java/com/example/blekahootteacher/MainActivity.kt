@@ -45,7 +45,17 @@ class MainActivity : AppCompatActivity() {
     private var advertiser: BluetoothLeAdvertiser? = null
     private var isScanning = false
     private var isAdvertising = false
-
+    private var isAdvertisingConf = false
+    private val confAdvertiseCallback = object : AdvertiseCallback() {
+        override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+            super.onStartSuccess(settingsInEffect)
+            Log.d(TAG, "Advertising CONF iniciado correctamente")
+        }
+        override fun onStartFailure(errorCode: Int) {
+            super.onStartFailure(errorCode)
+            Log.e(TAG, "Error al iniciar Advertising CONF: $errorCode")
+        }
+    }
     // UI
     private lateinit var tvStudents: TextView
     private lateinit var btnConfirmNext: Button
@@ -376,12 +386,50 @@ class MainActivity : AppCompatActivity() {
 
 // Un map o set para trackear a quién esperas ACK
     private val pendingAckCodes = mutableSetOf<String>()
+    fun advertiseConfirmationIndefinitely(name: String, code: String) {
+        // Si el code ya no está en pendingAckCodes, no anunciar
+        if (!pendingAckCodes.contains(code)) {
+            return
+        }
 
+        // Si ya estamos anunciando CONF, no repitas
+        if (isAdvertisingConf) return
+
+        // Detener cualquier advertising activo antes
+        stopAdvertisingIfNeeded()
+
+        val dataString = "CONF:$name:$code"
+        val dataToSend = dataString.toByteArray()
+
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setConnectable(false)
+            .build()
+
+        val data = AdvertiseData.Builder()
+            .addManufacturerData(0x1234, dataToSend)
+            .setIncludeDeviceName(false)
+            .build()
+
+        advertiser?.startAdvertising(settings, data, confAdvertiseCallback)
+        isAdvertising = true
+        isAdvertisingConf = true
+
+        Log.d(TAG, "Anunciando CONF:$name:$code indefinidamente")
+    }
+    fun stopAdvertisingConf() {
+        if (!isAdvertisingConf) return
+        stopAdvertisingIfNeeded()  // tu método genérico
+        isAdvertisingConf = false
+        Log.d(TAG, "Publicidad CONF detenida")
+    }
     fun advertiseConfirmation(name: String, code: String) {
         // Agregar 'code' a pendientes
         pendingAckCodes.add(code)
-        // Comenzar el envío repetido cada 2 segundos
-        sendConfRepeatedly(name, code)
+
+        // Llama a la publicidad indefinida, en lugar de sendConfRepeatedly
+        advertiseConfirmationIndefinitely(name, code)
     }
 
     // Nueva función que hace "CONF" en bucle
