@@ -1,6 +1,7 @@
 package com.example.blekahootteacher
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
@@ -20,11 +21,13 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.core.view.WindowCompat
 
 // Modelo de estudiante detectado
 data class Student(
     val name: String,
-    var code: String? = null
+    var code: String? = null,
+    var ackReceived: Boolean = false
 )
 
 class MainActivity : AppCompatActivity() {
@@ -58,19 +61,24 @@ class MainActivity : AppCompatActivity() {
     }
     // UI
     private lateinit var tvStudents: TextView
-    private lateinit var btnConfirmNext: Button
     private lateinit var btnStartAll: Button
     private lateinit var btnSelectDirectory: Button
 
     // Lista de estudiantes
     private val discoveredStudents = mutableListOf<Student>()
-
+    @SuppressLint("MissingSuperCall")
+    override fun onBackPressed() {
+        // No llamamos a super => se desactiva el botón atrás
+        // Puedes mostrar un Toast si deseas notificar
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
         setContentView(R.layout.activity_main)
 
+
         tvStudents = findViewById(R.id.tvStudents)
-        btnConfirmNext = findViewById(R.id.btnConfirmNext)
+
         btnStartAll = findViewById(R.id.btnStartAll)
         btnSelectDirectory = findViewById(R.id.btnSelectDirectory)
 
@@ -83,18 +91,7 @@ class MainActivity : AppCompatActivity() {
 
         startScanForStudents()
 
-        // Botón para confirmar al primer sin código
-        btnConfirmNext.setOnClickListener {
-            val studentToConfirm = discoveredStudents.firstOrNull { it.code == null }
-            if (studentToConfirm == null) {
-                Toast.makeText(this, "No hay estudiantes sin confirmar", Toast.LENGTH_SHORT).show()
-            } else {
-                val randomCode = generateRandomCode()
-                studentToConfirm.code = randomCode
-                advertiseConfirmation(studentToConfirm.name, randomCode)
-                updateStudentListUI()
-            }
-        }
+
 
         // Botón para enviar "START:ALL" y abrir TeacherQuestionActivity
         // Al pulsar Start All
@@ -138,6 +135,25 @@ class MainActivity : AppCompatActivity() {
         btnSelectDirectory.setOnClickListener {
             pickDirectory()
         }
+    }
+    // Guardará el estudiante al que actualmente estamos confirmando
+    private var currentConfirmingStudent: Student? = null
+    private fun processNextUnconfirmedStudent() {
+        // Si ya estamos confirmando a alguien, no hacemos nada
+        if (currentConfirmingStudent != null) return
+
+        // Busca el primer estudiante sin code
+        val nextStudent = discoveredStudents.firstOrNull { it.code == null } ?: return
+
+        // Asigna un code
+        val randomCode = generateRandomCode()
+        nextStudent.code = randomCode
+        currentConfirmingStudent = nextStudent
+
+        // Llamamos a la función que iniciará la publicidad indefinite de CONF
+        stopAdvertisingIfNeeded()
+        advertiseConfirmation(nextStudent.name, randomCode)
+        updateStudentListUI()
     }
 
     // -------------------------------------------------------------------
@@ -338,45 +354,83 @@ class MainActivity : AppCompatActivity() {
             val parts = dataString.split(":")
             if (parts.size == 2) {
                 val codeAck = parts[1]
-                // (1) Sacamos de pendingAckCodes
                 pendingAckCodes.remove(codeAck)
-                // (2) Log o Toast
-                runOnUiThread {
-                    Log.d(TAG, "ACKCODE recibido => $codeAck. Dejar de reenviar CONF")
+
+                val currStudent = currentConfirmingStudent
+                if (currStudent?.code == codeAck) {
+                    // 1) Detenemos la publicidad CONF
+                    stopAdvertisingConf()
+
+                    // 2) Marcamos ackReceived = true
+                    currStudent.ackReceived = true
+
+                    // 3) Dejamos de confirmar a este estudiante
+                    currentConfirmingStudent = null
+
+                    runOnUiThread {
+                        updateStudentListUI()
+                        // Llamamos processNextUnconfirmedStudent() por si hay más
+                        processNextUnconfirmedStudent()
+                    }
+                    Log.d(TAG, "ACKCODE => $codeAck. CONF finalizado para ${currStudent.name}")
+                } else {
+                    Log.d(TAG, "ACKCODE $codeAck no corresponde al estudiante actual")
+                    // Si quisieras que aparezca su code también, tendrías que buscar a
+                    // discoveredStudents.firstOrNull { it.code == codeAck } y poner ackReceived = true.
                 }
             }
         }
+
+
+
         if (dataString.startsWith("NAME:")) {
             val parts = dataString.split(":")
             if (parts.size == 2) {
                 val name = parts[1].trim()
-                // Si no está ya en la lista
                 val existing = discoveredStudents.firstOrNull { it.name == name }
                 if (existing == null) {
                     discoveredStudents.add(Student(name))
-                    runOnUiThread { updateStudentListUI() }
+                    runOnUiThread {
+                        updateStudentListUI()
+                        // Llama para ver si podemos confirmar a alguien
+                        processNextUnconfirmedStudent()
+                    }
                     Log.d(TAG, "Nuevo estudiante detectado: $name")
+                    processNextUnconfirmedStudent()
                 }
             }
         }
-    }
 
+    }
     private fun updateStudentListUI() {
         if (discoveredStudents.isEmpty()) {
             tvStudents.text = "No hay estudiantes detectados."
         } else {
             val sb = StringBuilder()
             discoveredStudents.forEachIndexed { i, st ->
-                val stCode = st.code ?: "sin confirmar"
-                sb.append("${i+1}) ${st.name} => $stCode\n")
+                val displayText = if (st.code != null && st.ackReceived) {
+                    st.code.toString()
+                } else {
+                    "sin confirmar"
+                }
+                sb.append("${i+1}) ${st.name} => $displayText\n")
             }
             tvStudents.text = sb.toString()
         }
     }
 
+
+    private val usedCodes = mutableSetOf<String>()
     private fun generateRandomCode(): String {
-        val rByte = (0..255).random().toByte()
-        return String.format("%02X", rByte)  // "AB", etc.
+        var code: String
+        do {
+            val rByte = (0..255).random().toByte()
+            code = String.format("%02X", rByte)  // "AB", etc.
+        } while (usedCodes.contains(code))
+
+        // Lo marcamos como usado
+        usedCodes.add(code)
+        return code
     }
 
     /**
@@ -427,13 +481,13 @@ class MainActivity : AppCompatActivity() {
     fun advertiseConfirmation(name: String, code: String) {
         // Agregar 'code' a pendientes
         pendingAckCodes.add(code)
-
-        // Llama a la publicidad indefinida, en lugar de sendConfRepeatedly
+        // En lugar de "sendConfRepeatedly", llama a la versión indefinida
         advertiseConfirmationIndefinitely(name, code)
     }
 
+
     // Nueva función que hace "CONF" en bucle
-    private fun sendConfRepeatedly(name: String, code: String) {
+   /* private fun sendConfRepeatedly(name: String, code: String) {
         if (!pendingAckCodes.contains(code)) {
             // Ya no está pendiente => no reenvíes
             return
@@ -466,7 +520,7 @@ class MainActivity : AppCompatActivity() {
                 sendConfRepeatedly(name, code)
             }
         }, 2000)
-    }
+    }*/
 
 
     /**

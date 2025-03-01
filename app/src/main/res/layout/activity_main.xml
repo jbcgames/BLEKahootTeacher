@@ -3,6 +3,7 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
     android:orientation="vertical"
     android:gravity="center_horizontal"
     android:padding="16dp">
@@ -16,11 +17,7 @@
         android:layout_marginBottom="16dp" />
 
     <!-- Botón para confirmar al primer estudiante sin código -->
-    <Button
-        android:id="@+id/btnConfirmNext"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Confirmar siguiente sin código" />
+
 
     <!-- Botón para enviar START:ALL y abrir TeacherQuestionActivity -->
     <Button
